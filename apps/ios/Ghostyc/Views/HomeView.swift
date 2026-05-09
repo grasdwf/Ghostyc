@@ -12,6 +12,29 @@ struct HomeView: View {
     private var agentDevice: DeviceSnapshot? { devices.first(where: { $0.role == "agent" }) }
     private var bridgeDevice: DeviceSnapshot? { devices.first(where: { $0.role == "bridge" }) }
     private var agentOnline: Bool { agentDevice?.isOnline ?? false }
+    private var bridgeOnline: Bool { bridgeDevice?.isOnline ?? false }
+    /// Wake uses bridge reachability only; PC “up” is agent online.
+    private var wakeEnabled: Bool { bridgeOnline && !agentOnline }
+
+    /// Shown as hover help where supported (e.g. iPad pointer); matches web `title` reasons.
+    private var wakeDisabledHelp: String? {
+        guard !wakeEnabled else { return nil }
+        if agentOnline { return "PC already online" }
+        if bridgeDevice == nil { return "Unknown bridge state" }
+        if !bridgeOnline { return "Bridge offline" }
+        return nil
+    }
+
+    private var bridgeStatusLabel: String {
+        guard let b = bridgeDevice else { return "Not connected" }
+        if b.isOnline {
+            if b.last_heartbeat == nil || (b.last_heartbeat?.isEmpty ?? true) {
+                return "Bridge online / heartbeat pending"
+            }
+            return "Ready"
+        }
+        return "Not connected"
+    }
 
     var body: some View {
         NavigationStack {
@@ -76,12 +99,26 @@ struct HomeView: View {
                     StatusItem(label: "Connection", value: agentOnline ? "Connected" : "Disconnected", active: agentOnline)
                     StatusItem(label: "Agent", value: agentDevice != nil ? (agentOnline ? "Running" : "Offline") : "Not seen", active: agentOnline)
                     StatusItem(label: "Relay", value: "Active", active: true)
-                    StatusItem(label: "Bridge", value: bridgeDevice?.isOnline == true ? "Ready" : "Not connected")
+                    StatusItem(label: "Bridge", value: bridgeStatusLabel, active: bridgeOnline)
                     StatusItem(label: "Heartbeat", value: timeAgo(lastHeartbeatAt ?? agentDevice?.last_heartbeat))
                     StatusItem(label: "Version", value: agentDevice?.version ?? "N/A")
                     StatusItem(label: "Last Cmd", value: lastCommandSummary)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var wakePCButton: some View {
+        let base = GhostycButton(title: "Wake PC", icon: "power", isLoading: commanding == "wake_pc") {
+            sendWakePC()
+        }
+        .disabled(!wakeEnabled || commanding == "wake_pc")
+        .opacity(wakeEnabled ? 1.0 : 0.4)
+        if let help = wakeDisabledHelp {
+            base.help(help)
+        } else {
+            base
         }
     }
 
@@ -93,9 +130,7 @@ struct HomeView: View {
                     .foregroundColor(.white)
 
                 LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
-                    GhostycButton(title: "Wake PC", icon: "power", isLoading: false) {}
-                        .disabled(true)
-                        .opacity(0.4)
+                    wakePCButton
 
                     GhostycButton(title: "Sleep", icon: "moon.fill", variant: .outline, isLoading: commanding == "sleep") {
                         sendCommand("sleep")
@@ -167,6 +202,44 @@ struct HomeView: View {
                 _ = try await APIClient.shared.postCommand(command: command, args: args)
             } catch {
                 // result arrives via WS
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            commanding = nil
+        }
+    }
+
+    private func sendWakePC() {
+        guard wakeEnabled else { return }
+        let clickLog: [String: Any] = [
+            "event": "wake_pc.button_clicked",
+            "bridge_online": bridgeOnline,
+            "agent_online": agentOnline,
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: clickLog),
+           let line = String(data: data, encoding: .utf8) {
+            print("[ghostyc] \(line)")
+        }
+        commanding = "wake_pc"
+        Task {
+            do {
+                let accepted = try await APIClient.shared.postCommand(target: "bridge", command: "wake_pc", args: [:])
+                let ok: [String: Any] = [
+                    "event": "wake_pc.rest_accepted",
+                    "request_id": accepted.request_id,
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: ok),
+                   let line = String(data: data, encoding: .utf8) {
+                    print("[ghostyc] \(line)")
+                }
+            } catch {
+                let err: [String: Any] = [
+                    "event": "wake_pc.rest_error",
+                    "message": error.localizedDescription,
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: err),
+                   let line = String(data: data, encoding: .utf8) {
+                    print("[ghostyc] \(line)")
+                }
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
             commanding = nil

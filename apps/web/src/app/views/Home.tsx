@@ -38,7 +38,26 @@ export function Home() {
   const agentDev = devices.find((d) => d.role === "agent");
   const bridgeDev = devices.find((d) => d.role === "bridge");
   const agentOnline = agentDev?.status === "online";
+  const bridgeOnline = bridgeDev?.status === "online";
+  /** Only the Windows agent counts as “PC online” for wake UX. */
   const overallOnline = agentOnline;
+  const wakeEnabled = Boolean(bridgeOnline && !agentOnline);
+
+  function wakeDisabledReason(): string | null {
+    if (agentOnline) return "PC already online";
+    if (!bridgeDev) return "Unknown bridge state";
+    if (!bridgeOnline) return "Bridge offline";
+    return null;
+  }
+
+  const bridgeStatusLabel =
+    !bridgeDev
+      ? "Not connected"
+      : bridgeOnline
+        ? bridgeDev.last_heartbeat
+          ? "Ready"
+          : "Bridge online / heartbeat pending"
+        : "Offline";
 
   function timeAgo(iso: string | null): string {
     if (!iso) return "N/A";
@@ -55,6 +74,35 @@ export function Home() {
       await api.postCommand("agent", command, args);
     } catch {
       // result will come via WS or can be polled
+    } finally {
+      setCommanding(null);
+    }
+  }
+
+  async function sendWakePC() {
+    console.info(
+      "[ghostyc]",
+      JSON.stringify({
+        event: "wake_pc.button_clicked",
+        bridge_online: bridgeOnline,
+        agent_online: agentOnline,
+      })
+    );
+    setCommanding("wake_pc");
+    try {
+      const accepted = await api.postCommand("bridge", "wake_pc", {});
+      console.info(
+        "[ghostyc]",
+        JSON.stringify({ event: "wake_pc.rest_accepted", request_id: accepted.request_id })
+      );
+    } catch (err) {
+      console.warn(
+        "[ghostyc]",
+        JSON.stringify({
+          event: "wake_pc.rest_error",
+          message: err instanceof Error ? err.message : String(err),
+        })
+      );
     } finally {
       setCommanding(null);
     }
@@ -85,7 +133,7 @@ export function Home() {
               <StatusItem label="Connection" value={agentOnline ? "Connected" : "Disconnected"} active={agentOnline} />
               <StatusItem label="Agent Status" value={agentDev ? (agentOnline ? "Running" : "Offline") : "Not seen"} active={agentOnline} />
               <StatusItem label="Relay" value="Active" active />
-              <StatusItem label="Wake Bridge" value={bridgeDev ? (bridgeDev.status === "online" ? "Ready" : "Offline") : "Not connected"} active={bridgeDev?.status === "online"} />
+              <StatusItem label="Wake Bridge" value={bridgeStatusLabel} active={bridgeOnline} />
               <StatusItem label="Last Heartbeat" value={agentDev ? timeAgo(agentDev.last_heartbeat) : "N/A"} />
               <StatusItem label="Agent Version" value={agentDev?.version ?? "N/A"} />
               <StatusItem label="Reconnects" value={String(agentDev?.reconnect_count ?? 0)} />
@@ -101,7 +149,14 @@ export function Home() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-3">
-              <Button className="w-full flex gap-2" disabled><Power className="w-4 h-4" /> Wake PC</Button>
+              <Button
+                className="w-full flex gap-2"
+                disabled={!wakeEnabled || commanding === "wake_pc"}
+                title={wakeDisabledReason() ?? undefined}
+                onClick={() => void sendWakePC()}
+              >
+                <Power className="w-4 h-4" /> Wake PC
+              </Button>
               <Button variant="outline" className="w-full flex gap-2" disabled={!agentOnline || commanding === "sleep"} onClick={() => sendCommand("sleep")}><EyeOff className="w-4 h-4" /> Sleep</Button>
               <Button variant="outline" className="w-full flex gap-2" disabled={!agentOnline || commanding === "lock"} onClick={() => sendCommand("lock")}><Shield className="w-4 h-4" /> Lock</Button>
               <Button variant="outline" className="w-full flex gap-2" disabled={!agentOnline || commanding === "restart"} onClick={() => sendCommand("restart", { delay_s: 5 })}><RefreshCw className="w-4 h-4" /> Restart</Button>
