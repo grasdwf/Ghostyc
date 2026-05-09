@@ -26,38 +26,94 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build (no code signing)
+      # Device-only build: iphoneos + generic iOS (NOT iOS Simulator).
+      - name: Build for device (iphoneos, no code signing)
         run: |
+          set -o pipefail
           xcodebuild build \
             -project Ghostyc.xcodeproj \
             -scheme Ghostyc \
-            -destination 'generic/platform=iOS Simulator' \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -configuration Release \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=NO \
-            | tail -20
+            ONLY_ACTIVE_ARCH=NO
 
-      - name: Archive for device (unsigned)
+      - name: Archive for device (iphoneos, unsigned)
         run: |
+          set -o pipefail
           xcodebuild archive \
             -project Ghostyc.xcodeproj \
             -scheme Ghostyc \
+            -sdk iphoneos \
             -archivePath build/Ghostyc.xcarchive \
             -destination 'generic/platform=iOS' \
             -configuration Release \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=NO \
-            | tail -20
+            ONLY_ACTIVE_ARCH=NO
 
-      - name: Export .app from archive
+      - name: Export .app into IPA Payload
         run: |
+          set -euo pipefail
           mkdir -p build/Payload
-          cp -r build/Ghostyc.xcarchive/Products/Applications/Ghostyc.app build/Payload/
-          cd build && zip -r Ghostyc.ipa Payload/
+          cp -R build/Ghostyc.xcarchive/Products/Applications/Ghostyc.app build/Payload/
+          (cd build && zip -r Ghostyc.ipa Payload/)
+
+      - name: Verify binary is iphoneos / arm64 (not Simulator)
+        working-directory: apps/ios/build
+        run: |
+          set -euo pipefail
+          BIN="Payload/Ghostyc.app/Ghostyc"
+          test -f "$BIN"
+
+          echo "== Architectures (lipo) =="
+          lipo -info "$BIN"
+          LIPO_OUT=$(lipo -info "$BIN")
+          echo "$LIPO_OUT" | grep -q arm64 || { echo "::error::lipo must list arm64"; exit 1; }
+          if echo "$LIPO_OUT" | grep -Eiq 'x86_64|i386'; then
+            echo "::error::lipo must not list x86_64 / i386"
+            exit 1
+          fi
+
+          echo "== file $BIN =="
+          file "$BIN"
+          FILEOUT=$(file "$BIN")
+          echo "$FILEOUT" | grep -q arm64 || { echo "::error::file output must include arm64"; exit 1; }
+          if echo "$FILEOUT" | grep -Eiq 'x86_64|i386'; then
+            echo "::error::file output must not reference x86_64 / i386"
+            exit 1
+          fi
+          if echo "$FILEOUT" | grep -Eiq 'Simulator|iPhoneSimulator'; then
+            echo "::error::file output must not reference Simulator / iPhoneSimulator"
+            exit 1
+          fi
+          # Some file(1) versions only print "Mach-O 64-bit executable arm64" without "iPhoneOS".
+          # Require iPhoneOS/for iOS in file when present; otherwise confirm device with vtool.
+          if ! echo "$FILEOUT" | grep -Eiq 'iPhoneOS|for iOS'; then
+            echo "::notice::file did not spell iPhoneOS/for iOS; checking vtool -show-build (must be PLATFORM iOS, not Simulator)"
+            xcrun vtool -show-build "$BIN"
+            xcrun vtool -show-build "$BIN" | grep -qiE 'platform[[:space:]]+iOS' || { echo "::error::vtool must report platform iOS (device)"; exit 1; }
+            if xcrun vtool -show-build "$BIN" | grep -qi 'simulator'; then
+              echo "::error::vtool must not report Simulator platform"
+              exit 1
+            fi
+          fi
+
+          echo "== LC_BUILD_VERSION (platform 2 = iOS device, 7 = iOS Simulator) =="
+          PLATFORM=$(xcrun otool -l "$BIN" | grep -A3 LC_BUILD_VERSION | grep -E '[[:space:]]platform[[:space:]]' | head -1 | awk '{print $2}')
+          echo "platform = ${PLATFORM:-unknown}"
+          if [ "${PLATFORM:-}" = "7" ]; then
+            echo "::error::Binary targets iOS Simulator (platform 7), expected iOS device (platform 2)"
+            exit 1
+          fi
+          if [ "${PLATFORM:-}" != "2" ]; then
+            echo "::error::Expected LC_BUILD_VERSION platform 2 (iOS / iPhoneOS), got: ${PLATFORM:-empty}"
+            exit 1
+          fi
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
