@@ -29,4 +29,13 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: false,
   },
+  // Railway serves `vite preview` (or static preview) — allow the deployed host
+  // so Vite does not block requests with "This host is not allowed".
+  preview: {
+    host: true,
+    allowedHosts: [
+      "ghostycweb-production.up.railway.app",
+      ".up.railway.app",
+    ],
+  },
 });
