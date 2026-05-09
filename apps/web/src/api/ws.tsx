@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from "react";
+import { getWsBaseUrl } from "./env";
 
 interface WsEnvelope {
   v: number;
@@ -74,10 +75,7 @@ export function WsProvider({ children }: { children: ReactNode }) {
     const token = localStorage.getItem("ghostyc_token");
     if (!token) return;
 
-    const base = import.meta.env.VITE_RELAY_URL || "";
-    const wsBase = base
-      ? base.replace(/^http/, "ws")
-      : `ws://${window.location.host}`;
+    const wsBase = getWsBaseUrl();
     const ws = new WebSocket(`${wsBase}/ws/client`);
     wsRef.current = ws;
 

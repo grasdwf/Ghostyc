@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_RELAY_URL || "";
+import { getApiBaseUrl } from "./env";
 
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem("ghostyc_token");
@@ -6,23 +6,46 @@ function authHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}` };
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+const DEFAULT_LOGIN_TIMEOUT_MS = 10_000;
+
+type RequestOptions = RequestInit & { timeoutMs?: number };
+
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  const base = getApiBaseUrl();
+  const { timeoutMs, ...fetchInit } = init ?? {};
+  const controller = new AbortController();
+  const effectiveTimeout = timeoutMs ?? (path === "/auth/login" ? DEFAULT_LOGIN_TIMEOUT_MS : undefined);
+  const timer =
+    effectiveTimeout !== undefined
+      ? setTimeout(() => controller.abort(), effectiveTimeout)
+      : undefined;
+
   let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, {
-      ...init,
+    res = await fetch(`${base}${path}`, {
+      ...fetchInit,
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         ...authHeaders(),
-        ...init?.headers,
+        ...fetchInit.headers,
       },
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ApiError(
+        0,
+        "request.timeout",
+        `Request timed out after ${effectiveTimeout ?? 0}ms. Check VITE_API_BASE_URL points to your relay.`,
+      );
+    }
     throw new ApiError(
       0,
       "network.unreachable",
-      "Cannot reach relay API. Ensure relay is running and reachable.",
+      "Cannot reach relay API. Ensure VITE_API_BASE_URL is set in production and the relay is reachable.",
     );
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 
   let json: unknown = null;
@@ -141,6 +164,7 @@ export const api = {
     return request<LoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ password }),
+      timeoutMs: DEFAULT_LOGIN_TIMEOUT_MS,
     });
   },
 

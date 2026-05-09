@@ -6,6 +6,7 @@ import { Input } from "../components/core/Input";
 import { useAuth } from "../../api/auth";
 import { useWs } from "../../api/ws";
 import { api, type DiagnosticsSnapshot } from "../../api/client";
+import { getApiBaseUrl } from "../../api/env";
 
 export function Settings() {
   const { logout } = useAuth();
@@ -14,7 +15,8 @@ export function Settings() {
   const [diag, setDiag] = useState<DiagnosticsSnapshot | null>(null);
 
   const token = localStorage.getItem("ghostyc_token") ?? "";
-  const relayUrl = import.meta.env.VITE_RELAY_URL || window.location.origin;
+  const apiBase = getApiBaseUrl();
+  const relayUrl = apiBase || `${window.location.origin} (dev proxy)`;
 
   useEffect(() => {
     api.diagnostics().then(setDiag).catch(() => {});
