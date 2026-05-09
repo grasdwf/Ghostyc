@@ -21,6 +21,7 @@ targets:
         type: group
     settings:
       base:
+        PRODUCT_NAME: Ghostyc
         PRODUCT_BUNDLE_IDENTIFIER: com.ghostyc.app
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: 1

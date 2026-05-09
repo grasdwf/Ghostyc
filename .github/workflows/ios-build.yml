@@ -63,6 +63,46 @@ jobs:
           cp -R build/Ghostyc.xcarchive/Products/Applications/Ghostyc.app build/Payload/
           (cd build && zip -r Ghostyc.ipa Payload/)
 
+      - name: Verify IPA Info.plist and bundle layout
+        working-directory: apps/ios/build
+        run: |
+          set -euo pipefail
+          test -f Ghostyc.ipa
+          rm -rf ipa_verify
+          mkdir ipa_verify
+          unzip -q Ghostyc.ipa -d ipa_verify
+          APP="ipa_verify/Payload/Ghostyc.app"
+          PLIST="$APP/Info.plist"
+          BIN="$APP/Ghostyc"
+          test -d "$APP"
+          test -f "$PLIST"
+          test -f "$BIN" || { echo "::error::Missing executable at Payload/Ghostyc.app/Ghostyc"; exit 1; }
+
+          echo "== Info.plist bundle keys (from packaged IPA) =="
+          EXEC=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST" 2>/dev/null) || true
+          NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$PLIST" 2>/dev/null) || true
+          DISP=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PLIST" 2>/dev/null) || true
+          echo "CFBundleExecutable=${EXEC:-<missing>}"
+          echo "CFBundleName=${NAME:-<missing>}"
+          echo "CFBundleDisplayName=${DISP:-<missing>}"
+
+          if [ -z "${EXEC:-}" ]; then
+            echo "::error::CFBundleExecutable is missing from Payload/Ghostyc.app/Info.plist"
+            exit 1
+          fi
+          if [ "$EXEC" != "Ghostyc" ]; then
+            echo "::error::CFBundleExecutable must be exactly Ghostyc (got: $EXEC)"
+            exit 1
+          fi
+          if [ "${NAME:-}" != "Ghostyc" ]; then
+            echo "::error::CFBundleName must be Ghostyc (got: ${NAME:-})"
+            exit 1
+          fi
+          if [ "${DISP:-}" != "Ghostyc" ]; then
+            echo "::error::CFBundleDisplayName must be Ghostyc (got: ${DISP:-})"
+            exit 1
+          fi
+
       - name: Verify binary is iphoneos / arm64 (not Simulator)
         working-directory: apps/ios/build
         run: |
