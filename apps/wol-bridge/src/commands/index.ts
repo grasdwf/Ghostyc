@@ -2,14 +2,15 @@
 //
 // V1 commands:
 //   - status   → returns uptime, version (and wifi: null — not collected on V1)
-//   - wake_pc  → sends magic packet, returns { packet_sent, packet_bytes }
+//   - wake_pc  → sends magic packet, returns { status, packet_sent, attempts, … }
 
 import * as os from "node:os";
 import { z } from "zod";
 import type { ErrorObject } from "@ghostyc/protocol";
 import type { BridgeConfig } from "../config.js";
+import type { BridgeLogger } from "../logger.js";
 import { BRIDGE_VERSION } from "../version.js";
-import { sendMagicPacket, WolError } from "../wol.js";
+import { resolveInterfaceAddress, sendMagicPacket, WolError } from "../wol.js";
 
 export type CommandOutcome =
   | { ok: true; result: unknown }
@@ -28,6 +29,13 @@ const StatusArgsSchema = z.object({}).strict();
 export interface ExecutionContext {
   config: BridgeConfig;
   bootedAtMs: number;
+  logger: BridgeLogger;
+}
+
+function resolveWolBindAddress(config: BridgeConfig): string | undefined {
+  if (config.WOL_LOCAL_ADDRESS) return config.WOL_LOCAL_ADDRESS;
+  if (config.WOL_INTERFACE) return resolveInterfaceAddress(config.WOL_INTERFACE);
+  return undefined;
 }
 
 export async function execute(
@@ -62,9 +70,43 @@ export async function execute(
         }
         const mac = parsed.data.mac ?? ctx.config.PC_MAC_ADDRESS;
         const broadcast = parsed.data.broadcast ?? ctx.config.PC_BROADCAST_ADDRESS;
-        const port = parsed.data.port ?? 9;
+        const wolPort = parsed.data.port ?? ctx.config.WOL_PORT;
+        let bindAddress: string | undefined;
         try {
-          const result = await sendMagicPacket({ mac, broadcast, port });
+          bindAddress = resolveWolBindAddress(ctx.config);
+        } catch (err) {
+          if (err instanceof WolError) {
+            return {
+              ok: false,
+              error: {
+                code: err.code,
+                message: err.message,
+                at,
+                request_id,
+              },
+            };
+          }
+          const msg = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            error: {
+              code: "wol.bind_resolve_failed",
+              message: msg,
+              at,
+              request_id,
+            },
+          };
+        }
+        try {
+          const result = await sendMagicPacket({
+            mac,
+            broadcast,
+            wolPort,
+            multiSend: ctx.config.WOL_MULTI_SEND,
+            bindAddress,
+            logger: ctx.logger,
+            request_id,
+          });
           return { ok: true, result };
         } catch (err) {
           if (err instanceof WolError) {

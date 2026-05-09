@@ -45,6 +45,10 @@ function main(): void {
       relay_url: config.RELAY_URL,
       pc_mac_address: config.PC_MAC_ADDRESS,
       pc_broadcast_address: config.PC_BROADCAST_ADDRESS,
+      wol_port: config.WOL_PORT,
+      wol_multi_send: config.WOL_MULTI_SEND,
+      wol_local_address: config.WOL_LOCAL_ADDRESS ?? null,
+      wol_interface: config.WOL_INTERFACE ?? null,
       log_dir: config.GHOSTYC_BRIDGE_LOG_DIR,
       host: os.hostname(),
       platform: os.platform(),
@@ -57,7 +61,7 @@ function main(): void {
     token: config.GHOSTYC_BRIDGE_TOKEN,
     device_id: deviceId,
     logger,
-    ctx: { config, bootedAtMs: Date.now() },
+    ctx: { config, bootedAtMs: Date.now(), logger },
   });
   client.start();
 

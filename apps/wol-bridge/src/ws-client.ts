@@ -348,11 +348,11 @@ export class BridgeWsClient {
     // the activity feed shows the WoL action explicitly (PROTOCOL §6.2 events).
     if (command === "wake_pc") {
       if (outcome.ok) {
-        this.opts.logger.info("wol.send", "magic packet emitted", {
+        this.opts.logger.info("wol.send", "UDP datagram(s) accepted by OS (packet_sent)", {
           request_id,
           correlation_id: request_id,
           command,
-          status: "success",
+          status: "packet_sent",
           duration_ms,
           context: outcome.result as Record<string, unknown>,
         });
